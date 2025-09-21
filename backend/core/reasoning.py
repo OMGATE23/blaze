@@ -32,7 +32,6 @@ def _run_async(coro):
     except RuntimeError:
         return asyncio.run(coro)
     else:
-        # In a running loop (e.g., inside FastAPI / Jupyter). Use a thread.
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
             return ex.submit(asyncio.run, coro).result()
@@ -59,15 +58,30 @@ class ReasoningEngine:
             import os
             mcp_config_path = os.path.join(os.path.dirname(__file__), "..", "mcp.json")
         
-        with open(mcp_config_path, "r") as f:
-            self.mcp_config = json.load(f)
-        self._init_mcp_sync()
+        try:
+            with open(mcp_config_path, "r") as f:
+                self.mcp_config = json.load(f)
+            self._init_mcp_sync()
+        except FileNotFoundError:
+            logger.warning(f"MCP config file not found at {mcp_config_path}. MCP tools will not be available.")
+            self.mcp_config = {}
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in MCP config file {mcp_config_path}: {e}. MCP tools will not be available.")
+            self.mcp_config = {}
+        except Exception as e:
+            logger.error(f"Error loading MCP config file {mcp_config_path}: {e}. MCP tools will not be available.")
+            self.mcp_config = {}
 
     # -----------------
     # MCP integration
     # -----------------
     def _init_mcp_sync(self):
         """Load MCP tools once, without eventlet or manual loop juggling."""
+        
+        # Skip MCP initialization if config is empty (file loading failed)
+        if not self.mcp_config:
+            logger.info("Skipping MCP initialization due to empty config")
+            return
 
         try:
             tools: List[Tool] = _run_async(self._list_mcp_tools())
